@@ -1,0 +1,110 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function hasRole(role) {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId);
+      
+      // Users can create their own profile during registration
+      allow create: if isOwner(userId);
+      
+      // Users can update their own profile
+      allow update: if isOwner(userId);
+      
+      // No one can delete user profiles
+      allow delete: if false;
+    }
+    
+    // Joba profiles (public read for Links to search)
+    match /jobaProfiles/{jobaId} {
+      // Anyone authenticated can read Joba profiles (for search)
+      allow read: if isAuthenticated();
+      
+      // Only the Joba owner can create/update their profile
+      allow create, update: if isOwner(jobaId) && hasRole('joba');
+      
+      // No deletion
+      allow delete: if false;
+    }
+    
+    // Link profiles (private)
+    match /linkProfiles/{linkId} {
+      // Only the Link owner can read/write their profile
+      allow read, write: if isOwner(linkId) && hasRole('link');
+    }
+    
+    // Projects
+    match /projects/{projectId} {
+      // Links can create projects
+      allow create: if hasRole('link');
+      
+      // Project owner (Link) can read/update
+      allow read, update: if isAuthenticated() && 
+                            resource.data.linkId == request.auth.uid;
+      
+      // Assigned Joba can read the project
+      allow read: if isAuthenticated() && 
+                    resource.data.jobaId == request.auth.uid;
+      
+      // All Jobas can read projects with status 'ABERTO' (for bidding)
+      allow read: if hasRole('joba') && resource.data.status == 'ABERTO';
+    }
+    
+    // Proposals
+    match /proposals/{proposalId} {
+      // Jobas can create proposals
+      allow create: if hasRole('joba');
+      
+      // Joba owner can read their own proposals
+      allow read: if isAuthenticated() && 
+                    resource.data.jobaId == request.auth.uid;
+      
+      // Project owner (Link) can read proposals for their projects
+      allow read: if isAuthenticated() && 
+                    get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.linkId == request.auth.uid;
+    }
+    
+    // Transactions (audit log - read only after creation)
+    match /transactions/{transactionId} {
+      // System creates transactions
+      allow create: if isAuthenticated();
+      
+      // Users can read their own transactions
+      allow read: if isAuthenticated() && 
+                    (resource.data.jobaId == request.auth.uid || 
+                     resource.data.linkId == request.auth.uid);
+      
+      // No updates or deletes
+      allow update, delete: if false;
+    }
+    
+    // Reviews
+    match /reviews/{reviewId} {
+      // Links can create reviews for completed projects
+      allow create: if hasRole('link');
+      
+      // Reviews are publicly readable
+      allow read: if true;
+      
+      // No updates or deletes
+      allow update, delete: if false;
+    }
+  }
+}
